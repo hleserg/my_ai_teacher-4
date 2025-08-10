@@ -1,0 +1,15 @@
+# Локальные зависимости для разработки (без PostgreSQL драйверов)
+python-telegram-bot==20.8
+python-dotenv==1.0.0
+sqlalchemy>=2.0.42
+requests==2.31.0
+aiohttp>=3.12.0
+aiosqlite>=0.21.0  # SQLite для локальной разработки
+beautifulsoup4==4.12.2
+schedule==1.2.0
+
+# Для разработки
+ipython  # Интерактивная оболочка
+pytest   # Тестирование
+black    # Форматирование кода
+flake8   # Линтер

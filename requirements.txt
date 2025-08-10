@@ -1,0 +1,10 @@
+python-telegram-bot==21.4
+python-dotenv==1.0.0
+sqlalchemy[asyncio]==2.0.25
+aiosqlite==0.21.0
+# psycopg2-binary==2.9.9  # Требует компилятор C++, используем для Docker
+# asyncpg==0.29.0  # Требует компилятор C++, используем для Docker
+requests==2.31.0
+aiohttp  # Используем последнюю версию с готовыми колесами
+beautifulsoup4==4.12.2
+schedule==1.2.0

@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from database import Database, Topic, LearningMaterial
 from grok_service import GrokService
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,7 +120,8 @@ class TopicService:
         """Обновить темы если прошло больше недели"""
         
         last_update = self._last_update.get(category)
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         
         # Обновляем если не обновлялись больше недели или вообще не обновлялись
         if not last_update or (now - last_update) > timedelta(days=7):
@@ -155,8 +156,8 @@ class TopicService:
                         difficulty=topic_data.get('difficulty', 'Средний'),
                         priority=topic_data.get('priority', 0),
                         is_active=True,
-                        created_at=datetime.utcnow(),
-                        updated_at=datetime.utcnow()
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc)
                     )
                     session.add(topic)
                 
@@ -181,7 +182,7 @@ class TopicService:
                 
                 # Проверяем, не старые ли материалы (больше 3 дней)
                 oldest_material = min(materials, key=lambda x: x.created_at)
-                if (datetime.utcnow() - oldest_material.created_at) > timedelta(days=3):
+                if (datetime.now(timezone.utc) - oldest_material.created_at) > timedelta(days=3):
                     return None  # Материалы устарели
                 
                 # Группируем материалы по типу
@@ -225,7 +226,7 @@ class TopicService:
                             title=f"{material_type.title()} для темы {topic_id}",
                             content=content,
                             is_verified=False,  # Пока не проверены
-                            created_at=datetime.utcnow()
+                            created_at=datetime.now(timezone.utc)
                         )
                         session.add(material)
                 

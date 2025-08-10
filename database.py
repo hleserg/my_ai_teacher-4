@@ -261,7 +261,8 @@ class Database:
 
     async def _update_user_streak(self, session: AsyncSession, user: User):
         """Обновить стрик пользователя"""
-        today = datetime.utcnow().date()
+        from datetime import timezone
+        today = datetime.now(timezone.utc).date()
         last_activity = user.last_activity.date() if user.last_activity else today
         
         if last_activity == today:

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
 Скрипт для проверки работоспособности AI Learning Bot
+Поддерживает как локальную разработку, так и продакшен
 """
 
 import os
 import sys
 import asyncio
 import logging
+import json
 from datetime import datetime
+from typing import Dict, List, Tuple
 
 # Добавляем текущую директорию в путь для импорта модулей
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +31,7 @@ logger = logging.getLogger(__name__)
 class SystemHealthCheck:
     def __init__(self):
         self.results = []
+        self.is_production = os.getenv('ENVIRONMENT') == 'production'
         
     def log_result(self, test_name: str, success: bool, message: str = ""):
         """Записать результат теста"""
@@ -39,12 +43,19 @@ class SystemHealthCheck:
         print(result)
         self.results.append((test_name, success, message))
         
+        # В продакшене также логируем
+        if self.is_production:
+            if success:
+                logger.info(f"Health check passed: {test_name}")
+            else:
+                logger.error(f"Health check failed: {test_name}: {message}")
+        
     async def check_environment_variables(self):
         """Проверка переменных окружения"""
         telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         grok_key = os.getenv('GROK_API_KEY')
         
-        if not telegram_token or telegram_token == 'your_telegram_bot_token_here':
+        if not telegram_token or 'your_telegram_bot_token' in telegram_token:
             self.log_result("Environment Variables", False, "TELEGRAM_BOT_TOKEN не установлен")
             return False
             

@@ -1,10 +1,23 @@
-python-telegram-bot==21.4
-python-dotenv==1.0.0
-sqlalchemy[asyncio]==2.0.25
-aiosqlite==0.21.0
-# psycopg2-binary==2.9.9  # Требует компилятор C++, используем для Docker
-# asyncpg==0.29.0  # Требует компилятор C++, используем для Docker
+# Production dependencies for AI Learning Bot
+# Проверенные версии, совместимые с Python 3.13
+
+# Core Telegram Bot Framework
+python-telegram-bot[job-queue]==21.4
+
+# Database & ORM
+sqlalchemy[asyncio]==2.0.42
+asyncpg==0.30.0           # PostgreSQL async driver for production
+aiosqlite==0.21.0         # SQLite async driver for development
+
+# HTTP clients
 requests==2.31.0
-aiohttp  # Используем последнюю версию с готовыми колесами
-beautifulsoup4==4.12.2
+aiohttp==3.12.15
+
+# Task scheduling
 schedule==1.2.0
+
+# Configuration management  
+python-dotenv==1.0.0
+
+# Web scraping (used in grok_service)
+beautifulsoup4==4.12.2

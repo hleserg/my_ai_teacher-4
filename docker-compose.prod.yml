@@ -1,0 +1,226 @@
+# Продакшен-конфигурация для AI Learning Bot
+# 
+# Использование:
+# 1. Скопируйте .env.prod.example в .env.prod и заполните переменные
+# 2. docker-compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+version: '3.8'
+
+services:
+  # База данных PostgreSQL с улучшенными настройками для продакшена
+  db:
+    image: postgres:15-alpine
+    container_name: ai_learning_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_learning}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_change_me}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    
+    volumes:
+      # Персистентное хранилище для БД
+      - postgres_data:/var/lib/postgresql/data
+      # Инициализация схемы БД
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+      # Настройки PostgreSQL для продакшена
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+    
+    # Закрываем порт в продакшене (доступ только внутри Docker)
+    # ports:
+    #   - "5432:5432"  # Раскомментируйте только для отладки
+    
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_bot} -d ${POSTGRES_DB:-ai_learning}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    
+    restart: unless-stopped
+    
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+
+  # Redis для кеширования (опционально)
+  redis:
+    image: redis:7-alpine
+    container_name: ai_learning_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password_change_me}
+    volumes:
+      - redis_data:/data
+    # ports:
+    #   - "6379:6379"  # Раскомментируйте только для отладки
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+
+  # Telegram бот - основной сервис
+  bot:
+    build: 
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: ai_learning_bot
+    
+    environment:
+      # Основные переменные
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN обязательна}
+      GROK_API_KEY: ${GROK_API_KEY:?GROK_API_KEY обязательна}
+      
+      # База данных
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_bot}:${POSTGRES_PASSWORD:-secure_password_change_me}@db:5432/${POSTGRES_DB:-ai_learning}
+      
+      # Redis (если используется)
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password_change_me}@redis:6379/0
+      
+      # Настройки приложения
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+      TZ: ${TIMEZONE:-Europe/Moscow}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # Безопасность
+      ENVIRONMENT: production
+    
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    volumes:
+      # Логи (только для чтения хоста)
+      - ./logs:/app/logs
+      # Конфигурации (read-only)
+      - ./config:/app/config:ro
+    
+    restart: unless-stopped
+    
+    # Проверка здоровья бота
+    healthcheck:
+      test: ["CMD-SHELL", "python health_check.py"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Безопасность
+    security_opt:
+      - no-new-privileges:true
+    user: "1000:1000"  # Не запускаем от root
+
+  # Планировщик задач (генерация тем)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: ai_learning_scheduler
+    command: python scheduler.py
+    
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ai_bot}:${POSTGRES_PASSWORD:-secure_password_change_me}@db:5432/${POSTGRES_DB:-ai_learning}
+      GROK_API_KEY: ${GROK_API_KEY:?GROK_API_KEY обязательна}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password_change_me}@redis:6379/0
+      PYTHONUNBUFFERED: 1
+      PYTHONPATH: /app
+      TZ: ${TIMEZONE:-Europe/Moscow}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: production
+    
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    
+    security_opt:
+      - no-new-privileges:true
+    user: "1000:1000"
+
+  # Мониторинг с Prometheus (опционально)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai_learning_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]  # Запуск только с --profile monitoring
+
+  # Grafana для визуализации метрик (опционально) 
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai_learning_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    profiles: ["monitoring"]
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  default:
+    name: ai_learning_network
+    driver: bridge

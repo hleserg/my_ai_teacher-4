@@ -1,15 +1,31 @@
-# Локальные зависимости для разработки (без PostgreSQL драйверов)
-python-telegram-bot==20.8
-python-dotenv==1.0.0
-sqlalchemy>=2.0.42
-requests==2.31.0
-aiohttp>=3.12.0
-aiosqlite>=0.21.0  # SQLite для локальной разработки
-beautifulsoup4==4.12.2
-schedule==1.2.0
+# Development and testing dependencies
+# Includes all production dependencies plus dev tools
 
-# Для разработки
-ipython  # Интерактивная оболочка
-pytest   # Тестирование
-black    # Форматирование кода
-flake8   # Линтер
+# Include production requirements
+-r requirements.txt
+
+# Testing and development tools
+pytest>=7.4.0
+pytest-asyncio>=0.21.0    # For async testing
+pytest-mock>=3.11.0       # Mocking utilities
+
+# Code quality and formatting
+black>=23.0.0             # Code formatter
+flake8>=6.0.0             # Linter
+isort>=5.12.0             # Import sorting
+
+# Development utilities
+ipython>=8.0.0            # Enhanced REPL
+notebook>=7.0.0           # Jupyter notebooks for analysis
+
+# Data analysis (used in test files)
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Documentation
+sphinx>=7.0.0             # Documentation generator
+sphinx-rtd-theme>=1.3.0   # Theme for docs
+
+# Debugging and profiling  
+pdb++>=0.10.0             # Enhanced debugger
+memory-profiler>=0.60.0   # Memory usage profiling

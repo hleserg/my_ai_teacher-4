@@ -1,0 +1,59 @@
+# Многоэтапная сборка для продакшена
+FROM python:3.13-slim AS builder
+
+# Установка системных зависимостей для сборки
+RUN apt-get update && apt-get install -y \
+    g++ \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание виртуального окружения
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Копирование и установка Python зависимостей
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Продакшен образ
+FROM python:3.13-slim AS production
+
+# Установка runtime зависимостей и создание пользователя
+RUN apt-get update && apt-get install -y \
+    curl \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && groupadd -g 1000 appuser \
+    && useradd -r -u 1000 -g appuser appuser
+
+# Копирование виртуального окружения из builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Создание рабочей директории
+WORKDIR /app
+
+# Создание директорий и установка прав
+RUN mkdir -p /app/logs /app/config && \
+    chown -R appuser:appuser /app
+
+# Копирование исходного кода
+COPY --chown=appuser:appuser . .
+
+# Переключение на непривилегированного пользователя
+USER appuser
+
+# Настройка переменных окружения
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Healthcheck
+HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
+    CMD python health_check.py || exit 1
+
+# Команда запуска по умолчанию
+CMD ["python", "main.py"]

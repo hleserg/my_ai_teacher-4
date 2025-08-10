@@ -192,72 +192,168 @@ class AILearningBot:
             return [text]
         
         parts = []
-        current_part = ""
+        remaining_text = text
         
-        # Разбиваем по абзацам (двойной перенос строки)
-        paragraphs = text.split('\n\n')
-        
-        for paragraph in paragraphs:
-            # Если добавление абзаца превысит лимит
-            if len(current_part) + len(paragraph) + 2 > max_length:
-                if current_part:  # Если есть накопленный текст
-                    parts.append(current_part.strip())
-                    current_part = paragraph + '\n\n'
-                else:  # Если абзац слишком длинный, разбиваем по предложениям
-                    sentences = paragraph.split('. ')
-                    for sentence in sentences:
-                        if len(current_part) + len(sentence) + 2 > max_length:
-                            if current_part:
-                                parts.append(current_part.strip())
-                                current_part = sentence + '. '
-                            else:  # Если предложение слишком длинное, принудительно разбиваем
-                                while len(sentence) > max_length:
-                                    parts.append(sentence[:max_length])
-                                    sentence = sentence[max_length:]
-                                current_part = sentence + '. '
-                        else:
-                            current_part += sentence + '. '
-                    current_part += '\n\n'
+        while remaining_text:
+            if len(remaining_text) <= max_length:
+                # Если оставшийся текст помещается в лимит
+                parts.append(remaining_text.strip())
+                break
+            
+            # Ищем лучшее место для разрыва в пределах лимита
+            split_pos = max_length
+            
+            # Пытаемся найти разрыв по абзацам (двойной перенос)
+            double_newline_pos = remaining_text.rfind('\n\n', 0, max_length)
+            if double_newline_pos > max_length // 2:  # Если разрыв не слишком рано
+                split_pos = double_newline_pos + 2
             else:
-                current_part += paragraph + '\n\n'
-        
-        # Добавляем последнюю часть
-        if current_part.strip():
-            parts.append(current_part.strip())
+                # Пытаемся найти разрыв по одинарному переносу
+                single_newline_pos = remaining_text.rfind('\n', 0, max_length)
+                if single_newline_pos > max_length // 2:
+                    split_pos = single_newline_pos + 1
+                else:
+                    # Пытаемся найти разрыв по предложению (точка + пробел)
+                    sentence_pos = remaining_text.rfind('. ', 0, max_length - 1)
+                    if sentence_pos > max_length // 2:
+                        split_pos = sentence_pos + 2
+                    else:
+                        # Пытаемся найти разрыв по пробелу
+                        space_pos = remaining_text.rfind(' ', 0, max_length)
+                        if space_pos > max_length // 2:
+                            split_pos = space_pos + 1
+                        # Иначе принудительный разрыв на max_length
+            
+            # Добавляем часть и продолжаем с оставшимся текстом
+            parts.append(remaining_text[:split_pos].strip())
+            remaining_text = remaining_text[split_pos:].strip()
         
         return parts
 
-    async def _send_long_message(self, query, text: str, reply_markup=None, parse_mode='Markdown', disable_web_page_preview=True):
-        """Отправляет длинное сообщение, разбивая на части при необходимости"""
+    async def _send_long_text_message(self, update: Update, text: str, reply_markup=None, parse_mode='Markdown', disable_web_page_preview=True):
+        """Отправляет длинное текстовое сообщение, разбивая на части при необходимости"""
         parts = self._split_long_message(text)
+        
+        async def safe_send_text(message_text, reply_markup_to_use=None):
+            """Безопасная отправка с fallback на plain text при ошибках Markdown"""
+            try:
+                await update.message.reply_text(
+                    message_text,
+                    reply_markup=reply_markup_to_use,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview
+                )
+            except Exception as markdown_error:
+                # Если ошибка парсинга Markdown, отправляем как plain text
+                logger.warning(f"Markdown parse error, falling back to plain text: {markdown_error}")
+                try:
+                    await update.message.reply_text(
+                        message_text,
+                        reply_markup=reply_markup_to_use,
+                        parse_mode=None,  # Без форматирования
+                        disable_web_page_preview=disable_web_page_preview
+                    )
+                except Exception:
+                    # Последняя попытка - очищаем от всех спецсимволов
+                    clean_text = message_text.replace('*', '').replace('_', '').replace('`', '')
+                    await update.message.reply_text(
+                        clean_text,
+                        reply_markup=reply_markup_to_use,
+                        disable_web_page_preview=disable_web_page_preview
+                    )
         
         if len(parts) == 1:
             # Если сообщение помещается в одну часть
-            await query.edit_message_text(
-                parts[0],
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                disable_web_page_preview=disable_web_page_preview
-            )
+            await safe_send_text(parts[0], reply_markup)
         else:
             # Если сообщение нужно разбить
-            # Первую часть редактируем
-            await query.edit_message_text(
-                f"📄 Часть 1/{len(parts)}\n\n{parts[0]}",
-                parse_mode=parse_mode,
-                disable_web_page_preview=disable_web_page_preview
-            )
+            # Первую часть отправляем
+            await safe_send_text(f"📄 Часть 1/{len(parts)}\n\n{parts[0]}")
             
             # Остальные части отправляем новыми сообщениями
             for i, part in enumerate(parts[1:], 2):
                 is_last_part = (i == len(parts))
                 message_text = f"📄 Часть {i}/{len(parts)}\n\n{part}"
                 
-                await query.message.reply_text(
+                await safe_send_text(
                     message_text,
-                    reply_markup=reply_markup if is_last_part else None,
+                    reply_markup if is_last_part else None
+                )
+
+    async def _send_long_message(self, query, text: str, reply_markup=None, parse_mode='Markdown', disable_web_page_preview=True):
+        """Отправляет длинное сообщение, разбивая на части при необходимости"""
+        parts = self._split_long_message(text)
+        
+        async def safe_edit_text(message_text, reply_markup_to_use=None):
+            """Безопасное редактирование с fallback на plain text при ошибках"""
+            try:
+                await query.edit_message_text(
+                    message_text,
+                    reply_markup=reply_markup_to_use,
                     parse_mode=parse_mode,
                     disable_web_page_preview=disable_web_page_preview
+                )
+            except Exception as edit_error:
+                logger.warning(f"Error in edit_message_text, trying fallbacks: {edit_error}")
+                try:
+                    # Попытка без форматирования
+                    await query.edit_message_text(
+                        message_text,
+                        reply_markup=reply_markup_to_use,
+                        parse_mode=None,
+                        disable_web_page_preview=disable_web_page_preview
+                    )
+                except Exception:
+                    # Последняя попытка - очищаем от спецсимволов
+                    clean_text = message_text.replace('*', '').replace('_', '').replace('`', '')
+                    await query.edit_message_text(
+                        clean_text,
+                        reply_markup=reply_markup_to_use,
+                        disable_web_page_preview=disable_web_page_preview
+                    )
+        
+        async def safe_reply_text(message_text, reply_markup_to_use=None):
+            """Безопасная отправка нового сообщения с fallback"""
+            try:
+                await query.message.reply_text(
+                    message_text,
+                    reply_markup=reply_markup_to_use,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview
+                )
+            except Exception as reply_error:
+                logger.warning(f"Error in reply_text, trying fallbacks: {reply_error}")
+                try:
+                    await query.message.reply_text(
+                        message_text,
+                        reply_markup=reply_markup_to_use,
+                        parse_mode=None,
+                        disable_web_page_preview=disable_web_page_preview
+                    )
+                except Exception:
+                    clean_text = message_text.replace('*', '').replace('_', '').replace('`', '')
+                    await query.message.reply_text(
+                        clean_text,
+                        reply_markup=reply_markup_to_use,
+                        disable_web_page_preview=disable_web_page_preview
+                    )
+        
+        if len(parts) == 1:
+            # Если сообщение помещается в одну часть
+            await safe_edit_text(parts[0], reply_markup)
+        else:
+            # Если сообщение нужно разбить
+            # Первую часть редактируем
+            await safe_edit_text(f"📄 Часть 1/{len(parts)}\n\n{parts[0]}")
+            
+            # Остальные части отправляем новыми сообщениями
+            for i, part in enumerate(parts[1:], 2):
+                is_last_part = (i == len(parts))
+                message_text = f"📄 Часть {i}/{len(parts)}\n\n{part}"
+                
+                await safe_reply_text(
+                    message_text,
+                    reply_markup if is_last_part else None
                 )
 
     def _format_topic_materials(self, topic: Dict, materials: Dict) -> str:
@@ -397,15 +493,31 @@ _{topic['description']}_
         question = update.message.text
         
         try:
-            # Получаем текущую тему пользователя
-            current_topic = await self.db.get_current_topic(user_id)
-            
-            if not current_topic:
-                await update.message.reply_text(
-                    "❓ Сначала выберите тему для изучения командой /topics"
-                )
-                return
-            
+            # Проверяем, есть ли контекст ожидания вопроса от кнопки
+            if 'waiting_for_question' in context.user_data:
+                topic_id = int(context.user_data['waiting_for_question'])
+                # Очищаем контекст
+                del context.user_data['waiting_for_question']
+                
+                # Получаем тему по ID
+                topic = await self.topic_service.get_topic_by_id(topic_id)
+                
+                if not topic:
+                    await update.message.reply_text("❌ Тема не найдена.")
+                    return
+                
+                current_topic = topic
+                
+            else:
+                # Обычная логика - получаем текущую тему пользователя
+                current_topic = await self.db.get_current_topic(user_id)
+                
+                if not current_topic:
+                    await update.message.reply_text(
+                        "❓ Сначала выберите тему для изучения командой /topics"
+                    )
+                    return
+
             # Показываем индикатор загрузки
             loading_msg = await self._send_loading_indicator(
                 update, 
@@ -418,10 +530,22 @@ _{topic['description']}_
             
             # Удаляем сообщение загрузки
             await self._delete_loading_message(loading_msg)
+
+            # Отправляем ответ с кнопкой возврата к теме
+            keyboard = [
+                [InlineKeyboardButton("📚 Вернуться к теме", callback_data=f"topic_{current_topic['id']}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.message.reply_text(
-                f"💡 <b>Ответ по теме \"{current_topic['title']}\":</b>\n\n{answer}",
-                parse_mode='HTML'
+            response = f"💡 **Ответ по теме \"{current_topic['title']}\":**\n\n{answer}"
+            
+            # Отправляем с автоматической разбивкой на части и обработкой ошибок Markdown
+            await self._send_long_text_message(
+                update,
+                response,
+                reply_markup=reply_markup,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
             )
             
         except Exception as e:
@@ -544,6 +668,48 @@ _{topic['description']}_
                 "❌ Произошла ошибка при загрузке тем. Попробуйте позже."
             )
 
+    async def handle_question_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка нажатия кнопки 'Задать вопрос'"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            # Извлекаем topic_id из callback_data
+            callback_data = query.data  # question_{topic_id}
+            topic_id = callback_data.split('_')[1]
+            
+            # Получаем информацию о теме
+            topic = await self.topic_service.get_topic_by_id(int(topic_id))
+            
+            if not topic:
+                await query.edit_message_text("❌ Тема не найдена.")
+                return
+            
+            # Сохраняем topic_id в пользовательских данных для следующего текстового сообщения
+            context.user_data['waiting_for_question'] = topic_id
+            
+            # Показываем сообщение с просьбой ввести вопрос
+            keyboard = [
+                [InlineKeyboardButton("🚫 Отменить", callback_data=f"topic_{topic_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"❓ **Задать вопрос по теме \"{topic['title']}\"**\n\n"
+                "Напишите свой вопрос следующим сообщением, и я дам подробный ответ на основе материалов этой темы.\n\n"
+                "💡 *Примеры хороших вопросов:*\n"
+                "• Как это применить на практике?\n"
+                "• В чем главные преимущества?\n"  
+                "• Какие есть альтернативы?\n"
+                "• Можете привести конкретный пример?",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка при обработке кнопки вопроса: {e}")
+            await query.edit_message_text("❌ Произошла ошибка. Попробуйте позже.")
+
     async def back_to_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Возврат к списку тем"""
         query = update.callback_query
@@ -611,6 +777,7 @@ _{topic['description']}_
             # Обработчики callback запросов
             application.add_handler(CallbackQueryHandler(self.handle_topic_selection, pattern="^topic_"))
             application.add_handler(CallbackQueryHandler(self.complete_topic, pattern="^complete_"))
+            application.add_handler(CallbackQueryHandler(self.handle_question_button, pattern="^question_"))
             application.add_handler(CallbackQueryHandler(self.back_to_topics, pattern="^back_to_topics"))
             application.add_handler(CallbackQueryHandler(self.show_general_topics_callback, pattern="^show_general_topics$"))
             application.add_handler(CallbackQueryHandler(self.show_1c_topics_callback, pattern="^show_1c_topics$"))

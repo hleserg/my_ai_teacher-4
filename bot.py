@@ -173,10 +173,12 @@ class AILearningBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
+            # Отправляем сообщение с автоматической разбивкой на части
+            await self._send_long_message(
+                query, 
                 response,
                 reply_markup=reply_markup,
-                parse_mode='HTML',
+                parse_mode='Markdown',
                 disable_web_page_preview=True
             )
             
@@ -184,31 +186,105 @@ class AILearningBot:
             logger.error(f"Error handling topic selection: {e}")
             await query.edit_message_text("❌ Произошла ошибка. Попробуйте позже.")
 
+    def _split_long_message(self, text: str, max_length: int = 4096) -> List[str]:
+        """Разбивает длинное сообщение на части, не превышающие max_length символов"""
+        if len(text) <= max_length:
+            return [text]
+        
+        parts = []
+        current_part = ""
+        
+        # Разбиваем по абзацам (двойной перенос строки)
+        paragraphs = text.split('\n\n')
+        
+        for paragraph in paragraphs:
+            # Если добавление абзаца превысит лимит
+            if len(current_part) + len(paragraph) + 2 > max_length:
+                if current_part:  # Если есть накопленный текст
+                    parts.append(current_part.strip())
+                    current_part = paragraph + '\n\n'
+                else:  # Если абзац слишком длинный, разбиваем по предложениям
+                    sentences = paragraph.split('. ')
+                    for sentence in sentences:
+                        if len(current_part) + len(sentence) + 2 > max_length:
+                            if current_part:
+                                parts.append(current_part.strip())
+                                current_part = sentence + '. '
+                            else:  # Если предложение слишком длинное, принудительно разбиваем
+                                while len(sentence) > max_length:
+                                    parts.append(sentence[:max_length])
+                                    sentence = sentence[max_length:]
+                                current_part = sentence + '. '
+                        else:
+                            current_part += sentence + '. '
+                    current_part += '\n\n'
+            else:
+                current_part += paragraph + '\n\n'
+        
+        # Добавляем последнюю часть
+        if current_part.strip():
+            parts.append(current_part.strip())
+        
+        return parts
+
+    async def _send_long_message(self, query, text: str, reply_markup=None, parse_mode='Markdown', disable_web_page_preview=True):
+        """Отправляет длинное сообщение, разбивая на части при необходимости"""
+        parts = self._split_long_message(text)
+        
+        if len(parts) == 1:
+            # Если сообщение помещается в одну часть
+            await query.edit_message_text(
+                parts[0],
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview
+            )
+        else:
+            # Если сообщение нужно разбить
+            # Первую часть редактируем
+            await query.edit_message_text(
+                f"📄 Часть 1/{len(parts)}\n\n{parts[0]}",
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview
+            )
+            
+            # Остальные части отправляем новыми сообщениями
+            for i, part in enumerate(parts[1:], 2):
+                is_last_part = (i == len(parts))
+                message_text = f"📄 Часть {i}/{len(parts)}\n\n{part}"
+                
+                await query.message.reply_text(
+                    message_text,
+                    reply_markup=reply_markup if is_last_part else None,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview
+                )
+
     def _format_topic_materials(self, topic: Dict, materials: Dict) -> str:
-        """Форматирование материалов темы"""
+        """Форматирование материалов темы в Markdown"""
         response = f"""
-<b>📖 {topic['title']}</b>
+**📖 {topic['title']}**
 
-<i>{topic['description']}</i>
+_{topic['description']}_
 
-⏱️ <b>Время изучения:</b> {topic['learning_time']}
-📊 <b>Сложность:</b> {topic['difficulty']}
+⏱️ **Время изучения:** {topic['learning_time']}
+📊 **Сложность:** {topic['difficulty']}
 
-<b>📚 Материалы для изучения:</b>
+**📚 Материалы для изучения:**
 
 {materials.get('tutorial', '')}
 
-<b>🔗 Полезные ссылки:</b>
+**🔗 Полезные ссылки:**
 {materials.get('links', '')}
 
-<b>🎥 Видео и курсы:</b>
+**🎥 Видео и курсы:**
 {materials.get('courses', '')}
 
-<b>💡 Практические примеры:</b>
+**💡 Практические примеры:**
 {materials.get('examples', '')}
         """
         
-        return response[:4096]  # Ограничение Telegram
+        return response  # Убираем ограничение, будем разбивать позже
 
     async def complete_topic(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отметить тему как завершенную"""
@@ -410,6 +486,64 @@ class AILearningBot:
             logger.error(f"Ошибка обновления тем: {e}")
             await update.message.reply_text(f"❌ Ошибка при обновлении тем: {str(e)}")
 
+    async def show_general_topics_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать общие темы ИИ (callback обработчик)"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Используем существующий метод _show_topics_list
+        await self._show_topics_list_callback(query, "general")
+    
+    async def show_1c_topics_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать темы для 1C (callback обработчик)"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Используем существующий метод _show_topics_list
+        await self._show_topics_list_callback(query, "1c")
+    
+    async def _show_topics_list_callback(self, query, category: str):
+        """Показать список тем для callback обработчиков"""
+        try:
+            # Показать индикатор загрузки
+            await query.edit_message_text("🔄 Загружаю темы...")
+            
+            # Получить темы из сервиса
+            topics = await self.topic_service.get_topics_by_category(category)
+            
+            if not topics:
+                await query.edit_message_text(
+                    f"❌ Темы в категории '{category}' не найдены."
+                )
+                return
+            
+            # Создать кнопки для тем
+            keyboard = []
+            for topic in topics:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📖 {topic['title']}", 
+                        callback_data=f"topic_{topic['id']}"
+                    )
+                ])
+            
+            # Добавить кнопку назад
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_topics")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            category_name = "общие темы ИИ" if category == "general" else "темы для 1C"
+            await query.edit_message_text(
+                f"📚 Выберите {category_name}:",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка при показе тем категории {category}: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при загрузке тем. Попробуйте позже."
+            )
+
     async def back_to_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Возврат к списку тем"""
         query = update.callback_query
@@ -478,6 +612,8 @@ class AILearningBot:
             application.add_handler(CallbackQueryHandler(self.handle_topic_selection, pattern="^topic_"))
             application.add_handler(CallbackQueryHandler(self.complete_topic, pattern="^complete_"))
             application.add_handler(CallbackQueryHandler(self.back_to_topics, pattern="^back_to_topics"))
+            application.add_handler(CallbackQueryHandler(self.show_general_topics_callback, pattern="^show_general_topics$"))
+            application.add_handler(CallbackQueryHandler(self.show_1c_topics_callback, pattern="^show_1c_topics$"))
             
             # Обработчик текстовых сообщений (вопросы)
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_question))

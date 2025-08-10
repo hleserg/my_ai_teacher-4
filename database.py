@@ -158,9 +158,13 @@ class Database:
                     return 0
                 
                 # Проверяем, не завершена ли уже эта тема
-                existing_completion = await session.query(CompletedTopic).filter_by(
-                    user_id=user.id, topic_id=topic_id
-                ).first()
+                result = await session.execute(
+                    select(CompletedTopic).where(
+                        CompletedTopic.user_id == user.id,
+                        CompletedTopic.topic_id == topic_id
+                    )
+                )
+                existing_completion = result.scalar_one_or_none()
                 
                 if existing_completion:
                     return 0  # Тема уже завершена
@@ -197,9 +201,12 @@ class Database:
                 if not user:
                     return self._default_stats()
                 
-                completed_count = await session.query(CompletedTopic).filter_by(
-                    user_id=user.id
-                ).count()
+                # Используем select вместо session.query для SQLAlchemy 2.0
+                result = await session.execute(
+                    select(CompletedTopic).where(CompletedTopic.user_id == user.id)
+                )
+                completed_topics = result.scalars().all()
+                completed_count = len(completed_topics)
                 
                 # Подсчет дней изучения
                 learning_days = (datetime.now() - user.created_at).days + 1
@@ -223,19 +230,23 @@ class Database:
                 if not user:
                     return []
                 
-                completed = await session.query(CompletedTopic).join(Topic).filter(
-                    CompletedTopic.user_id == user.id
-                ).all()
+                # Используем select вместо session.query для SQLAlchemy 2.0
+                result = await session.execute(
+                    select(CompletedTopic, Topic)
+                    .join(Topic, CompletedTopic.topic_id == Topic.id)
+                    .where(CompletedTopic.user_id == user.id)
+                )
                 
-                return [
-                    {
-                        'id': ct.topic.id,
-                        'title': ct.topic.title,
-                        'completed_at': ct.completed_at,
-                        'points_earned': ct.points_earned
-                    }
-                    for ct in completed
-                ]
+                completed_topics = []
+                for completed_topic, topic in result.all():
+                    completed_topics.append({
+                        'id': topic.id,
+                        'title': topic.title,
+                        'completed_at': completed_topic.completed_at,
+                        'points_earned': completed_topic.points_earned
+                    })
+                
+                return completed_topics
                 
         except Exception as e:
             logger.error(f"Ошибка получения завершенных тем: {e}")
